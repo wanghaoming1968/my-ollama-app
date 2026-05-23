@@ -1,2 +1,7 @@
 streamlit
 ollama
+sentence-transformers
+chromadb
+pypdf
+python-docx
+torch
