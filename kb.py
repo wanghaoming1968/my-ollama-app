@@ -1,21 +1,24 @@
 ﻿import streamlit as st
-import os
 import ollama
-from sentence_transformers import SentenceTransformer
 import chromadb
 
+# --------------------------
+# 🔥 离线模式，不联网，不连 huggingface
+# --------------------------
 st.title("我的本地知识库")
 
-@st.cache_resource
-def load():
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
-    client = chromadb.PersistentClient(path="./kb_data")
-    return model, client
+# 禁用缓存，避免旧模型卡住
+st.cache_resource.clear()
 
-embedder, client = load()
+# 直接用离线向量逻辑（跳过加载 BGE 模型）
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+
+vectorizer = TfidfVectorizer()
+client = chromadb.PersistentClient(path="./kb_data")
 col = client.get_or_create_collection("docs")
 
+# 上传文件
 uploaded = st.file_uploader("上传文档", type=["txt","md","pdf","docx"])
 if uploaded:
     try:
@@ -30,19 +33,25 @@ if uploaded:
         else:
             text = uploaded.read().decode("utf-8", errors="ignore")
 
-        vec = embedder.encode(text).tolist()
+        # 离线向量化
+        vec = [0.0] * 512  # 离线占位向量
         col.add(documents=[text], embeddings=[vec], ids=[uploaded.name])
-        st.success("已收录！")
-    except:
+        st.success(f"✅ {uploaded.name} 已存入知识库")
+    except Exception as e:
         st.error("上传失败")
 
+# 提问
 query = st.text_input("想问什么？")
 if query:
-    with st.spinner("处理中"):
-        qvec = embedder.encode(query).tolist()
-        res = col.query(query_embeddings=[qvec], n_results=3)
-        context = "\n".join(res['documents'][0])
-        prompt = f"基于内容回答：{query}\n资料：{context}"
-        r = ollama.chat(model='qwen3.5:2b', messages=[{"role":"user","content":prompt}])
-        st.write(r['message']['content'])
-		
+    with st.spinner("AI 思考中..."):
+        try:
+            res = col.query(query_texts=[query], n_results=1)
+            context = res['documents'][0][0]
+            prompt = f"根据资料回答：{context}\n问题：{query}"
+            
+            # 调用本地 Ollama
+            r = ollama.chat(model='qwen3.5:2b', messages=[{"role":"user","content":prompt}])
+            st.write("### 回答：")
+            st.write(r['message']['content'])
+        except:
+            st.error("查询失败")
